@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Party Lobby - King's Cup</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; overflow-x: hidden; }
+    .hidden { display: none !important; }
+    .container { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 16px; }
+    .lobby-card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    .app-title { text-align: center; font-size: 28px; font-weight: 900; letter-spacing: 1px; color: #fef08a; }
+    .app-subtitle { text-align: center; font-size: 13px; color: #94a3b8; margin-top: -10px; }
+    .input-group { display: flex; flex-direction: column; gap: 6px; }
+    .input-label { font-size: 13px; color: #cbd5e1; font-weight: 600; }
+    input[type="text"], input[type="tel"] { width: 100%; padding: 14px; background: #0f172a; border: 1px solid #475569; border-radius: 12px; color: #ffffff; font-size: 16px; outline: none; user-select: text; -webkit-user-select: text; }
+    input:focus { border-color: #f59e0b; }
+    .btn { width: 100%; padding: 15px; border: none; border-radius: 14px; font-size: 16px; font-weight: 700; cursor: pointer; transition: transform 0.1s, opacity 0.2s; }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; box-shadow: 0 4px 15px rgba(217, 119, 6, 0.35); }
+    .btn-secondary { background: #334155; color: #f8fafc; }
+    .btn-disabled { background: #1e293b; color: #64748b; border: 1px solid #334155; cursor: not-allowed; }
+    .divider { display: flex; align-items: center; text-align: center; color: #64748b; font-size: 12px; }
+    .divider::before, .divider::after { content: ''; flex: 1; border-bottom: 1px solid #334155; }
+    .divider:not(:empty)::before { margin-right: 10px; }
+    .divider:not(:empty)::after { margin-left: 10px; }
+    .join-row { display: flex; gap: 10px; }
+    .join-row input { flex: 1; text-align: center; letter-spacing: 4px; font-weight: 800; }
+    .join-row button { width: auto; padding: 0 22px; }
+    .room-code-box { background: #0f172a; border: 2px dashed #f59e0b; border-radius: 16px; padding: 16px; text-align: center; }
+    .room-code-label { font-size: 12px; color: #94a3b8; }
+    .room-code-num { font-size: 40px; font-weight: 900; letter-spacing: 8px; color: #fef08a; margin-top: 4px; }
+    .player-list { display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto; }
+    .player-item { background: #0f172a; padding: 10px 14px; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 15px; }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 99px; background: #f59e0b; color: #0f172a; font-weight: 800; }
+    .dot-online { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; margin-right: 6px; }
+    .dot-offline { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; display: inline-block; margin-right: 6px; }
+    .game-container { width: 100%; max-width: 420px; min-height: 92dvh; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+    .status-panel { background: rgba(30, 41, 59, 0.85); border: 1px solid #334155; border-radius: 16px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+    .status-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .status-item { display: flex; align-items: center; gap: 5px; }
+    .status-label { color: #94a3b8; }
+    .status-value { color: #f59e0b; font-weight: 700; max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kings-indicators { display: flex; gap: 4px; }
+    .king-dot { width: 11px; height: 11px; border-radius: 50%; background: #334155; border: 1px solid #64748b; }
+    .king-dot.active { background: #eab308; box-shadow: 0 0 8px #eab308; border-color: #fef08a; }
+    .turn-banner { text-align: center; padding: 8px 12px; border-radius: 12px; background: #1e293b; font-size: 14px; font-weight: 700; color: #e2e8f0; }
+    .turn-banner.my-turn { background: rgba(245, 158, 11, 0.2); border: 1px solid #f59e0b; color: #fef08a; }
+    .drawer-tag { text-align: center; font-size: 13px; color: #94a3b8; min-height: 18px; }
+    .stage { width: 100%; max-width: 290px; height: 370px; perspective: 1000px; margin: 0 auto; }
+    .card { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; transition: transform 0.55s cubic-bezier(0.175, 0.885, 0.32, 1.275); border-radius: 20px; box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6); }
+    .card.is-flipped { transform: rotateY(180deg); }
+    .card-face { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border-radius: 20px; display: flex; flex-direction: column; justify-content: space-between; padding: 18px; }
+    .card-back { background: radial-gradient(circle, #b91c1c 0%, #450a0a 100%); border: 3px solid #fecaca; align-items: center; justify-content: center; }
+    .card-back-inner { border: 2px dashed rgba(255, 255, 255, 0.25); width: 88%; height: 92%; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+    .card-front { background: #ffffff; color: #0f172a; transform: rotateY(180deg); }
+    .card-corner { display: flex; flex-direction: column; align-items: center; font-weight: 900; line-height: 1; }
+    .card-corner.bottom { transform: rotate(180deg); }
+    .corner-rank { font-size: 26px; }
+    .corner-suit { font-size: 20px; }
+    .red-suit { color: #dc2626; }
+    .black-suit { color: #0f172a; }
+    .card-center-rule { text-align: center; margin: auto 0; display: flex; flex-direction: column; gap: 10px; }
+    .rule-title { font-size: 24px; font-weight: 800; }
+    .rule-desc { font-size: 14px; line-height: 1.5; color: #334155; padding: 0 6px; }
+    .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.82); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 100; }
+    .modal-box { background: #1e293b; border: 1px solid #475569; border-radius: 18px; width: 100%; max-width: 320px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+    .gameover-overlay { background: radial-gradient(circle, #7f1d1d 0%, #450a0a 100%); flex-direction: column; text-align: center; gap: 16px; }
+    .leave-link { text-align: center; font-size: 12px; color: #64748b; text-decoration: underline; cursor: pointer; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="container" id="view-entry">
+    <div class="lobby-card">
+      <div class="app-title">👑 KING'S CUP</div>
+      <div class="app-subtitle">多人即時同步派對版</div>
+      <div class="input-group">
+        <label class="input-label">你的玩家暱稱</label>
+        <input type="text" id="input-name" placeholder="輸入名字（例：小明）" maxlength="10" />
+      </div>
+      <button class="btn btn-primary" onclick="createRoom()">建立新房間（當房長）</button>
+      <div class="divider">或輸入房號加入</div>
+      <div class="join-row">
+        <input type="tel" id="input-room-code" placeholder="4碼房號" maxlength="4" />
+        <button class="btn btn-secondary" onclick="joinRoom()">加入</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container hidden" id="view-lobby">
+    <div class="lobby-card">
+      <div class="room-code-box">
+        <div class="room-code-label">請朋友打開網頁輸入此房號</div>
+        <div class="room-code-num" id="lobby-room-code">----</div>
+      </div>
+      <div class="input-label">已加入玩家（<span id="lobby-player-count">0</span> 人）</div>
+      <div class="player-list" id="lobby-player-list"></div>
+      <button class="btn btn-primary hidden" id="btn-start-game" onclick="startGame()">開始遊戲</button>
+      <div class="app-subtitle hidden" id="guest-wait-text">等待房長按下開始遊戲...</div>
+      <div class="leave-link" onclick="leaveRoom()">離開房間</div>
+    </div>
+  </div>
+
+  <div class="game-container hidden" id="view-game">
+    <div>
+      <div class="status-panel">
+        <div class="status-row">
+          <div class="status-item"><span class="status-label">🍺 陪酒員:</span><span class="status-value" id="val-drinker">無</span></div>
+          <div class="status-item"><span class="status-label">🤪 神經病:</span><span class="status-value" id="val-crazy">無</span></div>
+        </div>
+        <div class="status-row">
+          <div class="status-item" style="max-width: 65%;"><span class="status-label">📜 規則:</span><span class="status-value" id="val-rule" style="max-width: 150px;">無</span></div>
+          <div class="status-item">
+            <span class="status-label">👑 公杯:</span>
+            <div class="kings-indicators">
+              <div class="king-dot" id="k-dot-1"></div>
+              <div class="king-dot" id="k-dot-2"></div>
+              <div class="king-dot" id="k-dot-3"></div>
+              <div class="king-dot" id="k-dot-4"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="turn-banner" id="turn-banner" style="margin-top: 8px;">載入中...</div>
+      <div class="drawer-tag" id="drawer-tag" style="margin-top: 6px;"></div>
+    </div>
+
+    <div class="stage">
+      <div class="card" id="card">
+        <div class="card-face card-back">
+          <div class="card-back-inner">
+            <span style="font-size: 42px;">👑</span>
+            <p style="font-size: 14px; letter-spacing: 2px; color: rgba(255,255,255,0.85);">等待第一張牌</p>
+          </div>
+        </div>
+        <div class="card-face card-front">
+          <div class="card-corner top"><span class="corner-rank" id="front-rank-top">A</span><span class="corner-suit" id="front-suit-top">♠</span></div>
+          <div class="card-center-rule"><div class="rule-title" id="front-rule-title">Waterfall</div><div class="rule-desc" id="front-rule-desc">規則說明</div></div>
+          <div class="card-corner bottom"><span class="corner-rank" id="front-rank-btm">A</span><span class="corner-suit" id="front-suit-btm">♠</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <button class="btn btn-primary" id="btn-draw" onclick="drawCard()">抽一張牌</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #64748b;">
+        <span>房號：<strong id="game-room-code" style="color: #cbd5e1;">----</strong></span>
+        <span id="deck-count">剩餘：52 張</span>
+        <span class="leave-link" style="margin: 0;" onclick="leaveRoom()">離開</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="modal-rule">
+    <div class="modal-box">
+      <div style="font-size: 18px; font-weight: 800; color: #fef08a;">📜 抽到【J Make a Rule】！</div>
+      <div style="font-size: 13px; color: #cbd5e1;">請訂立一條新規則，送出後全場所有手機都會同步置頂顯示：</div>
+      <input type="text" id="input-custom-rule" placeholder="例：不能說「喝」、不准用手指人" maxlength="25" />
+      <button class="btn btn-primary" onclick="submitRule()">確認發布新規則</button>
+    </div>
+  </div>
+
+  <div class="overlay gameover-overlay hidden" id="modal-gameover">
+    <div style="font-size: 68px;">👑💥</div>
+    <div style="font-size: 30px; font-weight: 900; color: #fef08a;">第四張 K 出現！</div>
+    <div style="font-size: 18px; line-height: 1.6;">公杯已滿！<br>請 <strong id="gameover-loser" style="color: #fef08a; font-size: 22px;"></strong> 乾掉整杯公杯！</div>
+    <button class="btn btn-primary hidden" id="btn-restart" style="max-width: 220px;" onclick="restartGame()">再來一局</button>
+    <button class="btn btn-secondary hidden" id="btn-back-lobby" style="max-width: 220px;" onclick="backToLobby()">回到等待大廳</button>
+  </div>
+
+  <script>
+    const socket = io();
+    let myPlayerId = localStorage.getItem('party_player_id');
+    if (!myPlayerId) {
+      myPlayerId = 'p_' + Math.random().toString(36).substring(2, 11);
+      localStorage.setItem('party_player_id', myPlayerId);
+    }
+    let currentRoomCode = localStorage.getItem('party_room_code') || '';
+    let lastRenderedDrawId = 0;
+
+    const savedName = localStorage.getItem('party_player_name');
+    if (savedName) document.getElementById('input-name').value = savedName;
+
+    socket.on('connect', () => {
+      if (currentRoomCode) socket.emit('rejoin_room', { roomCode: currentRoomCode, playerId: myPlayerId });
+    });
+    socket.on('session_expired', () => {
+      localStorage.removeItem('party_room_code');
+      currentRoomCode = '';
+      showView('view-entry');
+    });
+    socket.on('error_msg', (msg) => alert(msg));
+
+    function showView(viewId) {
+      ['view-entry', 'view-lobby', 'view-game'].forEach(id => {
+        document.getElementById(id).classList.toggle('hidden', id !== viewId);
+      });
+    }
+    function createRoom() {
+      const name = document.getElementById('input-name').value.trim();
+      if (!name) return alert('請先輸入你的暱稱！');
+      localStorage.setItem('party_player_name', name);
+      socket.emit('create_room', { playerName: name, playerId: myPlayerId });
+    }
+    function joinRoom() {
+      const name = document.getElementById('input-name').value.trim();
+      const code = document.getElementById('input-room-code').value.trim();
+      if (!name) return alert('請先輸入你的暱稱！');
+      if (code.length !== 4) return alert('請輸入 4 碼房號！');
+      localStorage.setItem('party_player_name', name);
+      socket.emit('join_room', { roomCode: code, playerName: name, playerId: myPlayerId });
+    }
+    function leaveRoom() {
+      localStorage.removeItem('party_room_code');
+      currentRoomCode = '';
+      lastRenderedDrawId = 0;
+      location.reload();
+    }
+    function startGame() { socket.emit('start_game', { roomCode: currentRoomCode, playerId: myPlayerId }); }
+    function drawCard() { socket.emit('game_action', { roomCode: currentRoomCode, playerId: myPlayerId, action: 'DRAW_CARD' }); }
+    function submitRule() {
+      const ruleText = document.getElementById('input-custom-rule').value.trim();
+      if (!ruleText) return alert('請輸入規則內容！');
+      socket.emit('game_action', { roomCode: currentRoomCode, playerId: myPlayerId, action: 'SUBMIT_RULE', payload: { ruleText } });
+      document.getElementById('input-custom-rule').value = '';
+      document.getElementById('modal-rule').classList.add('hidden');
+    }
+    function restartGame() { socket.emit('game_action', { roomCode: currentRoomCode, playerId: myPlayerId, action: 'RESTART' }); }
+    function backToLobby() { socket.emit('back_to_lobby', { roomCode: currentRoomCode, playerId: myPlayerId }); }
+
+    socket.on('room_state', (state) => {
+      currentRoomCode = state.roomCode;
+      localStorage.setItem('party_room_code', currentRoomCode);
+      const isHost = state.hostId === myPlayerId;
+
+      if (state.phase === 'LOBBY') {
+        lastRenderedDrawId = 0;
+        document.getElementById('modal-gameover').classList.add('hidden');
+        document.getElementById('modal-rule').classList.add('hidden');
+        showView('view-lobby');
+        document.getElementById('lobby-room-code').textContent = state.roomCode;
+        document.getElementById('lobby-player-count').textContent = state.players.length;
+        document.getElementById('lobby-player-list').innerHTML = state.players.map(p => `
+          <div class="player-item">
+            <div><span class="${p.connected ? 'dot-online' : 'dot-offline'}"></span><strong>${escapeHtml(p.name)}</strong> ${p.id === myPlayerId ? '(你)' : ''}</div>
+            ${p.id === state.hostId ? '<span class="badge">房長</span>' : ''}
+          </div>
+        `).join('');
+        document.getElementById('btn-start-game').classList.toggle('hidden', !isHost);
+        document.getElementById('guest-wait-text').classList.toggle('hidden', isHost);
+        return;
+      }
+      if (state.phase === 'PLAYING' && state.game) {
+        showView('view-game');
+        renderGame(state.game, isHost);
+      }
+    });
+
+    function renderGame(game, isHost) {
+      document.getElementById('game-room-code').textContent = currentRoomCode;
+      document.getElementById('deck-count').textContent = `剩餘：${game.remainingCount} 張`;
+      document.getElementById('val-drinker').textContent = game.status.drinker;
+      document.getElementById('val-crazy').textContent = game.status.crazy;
+      document.getElementById('val-rule').textContent = game.status.rule;
+      for (let i = 1; i <= 4; i++) document.getElementById(`k-dot-${i}`).classList.toggle('active', i <= game.kingsDrawn);
+
+      const cardEl = document.getElementById('card');
+      if (game.drawId === 0) {
+        lastRenderedDrawId = 0;
+        cardEl.classList.remove('is-flipped');
+        document.getElementById('drawer-tag').textContent = '';
+      } else if (game.drawId !== lastRenderedDrawId && game.currentCard) {
+        const isFirstDraw = lastRenderedDrawId === 0;
+        lastRenderedDrawId = game.drawId;
+        animateCardFlip(game.currentCard, isFirstDraw);
+      }
+      if (game.currentCard) document.getElementById('drawer-tag').textContent = `上一張由【${game.currentCard.drawerName}】抽出`;
+
+      const isMyTurn = game.turnPlayerId === myPlayerId;
+      const bannerEl = document.getElementById('turn-banner');
+      const drawBtn = document.getElementById('btn-draw');
+      if (game.pendingRuleInput) {
+        const drawerName = game.currentCard ? game.currentCard.drawerName : '';
+        const amIDrawer = game.currentCard && game.currentCard.drawerId === myPlayerId;
+        bannerEl.textContent = `📜 等待【${drawerName}】訂立新規則...`;
+        bannerEl.classList.remove('my-turn');
+        drawBtn.disabled = true;
+        drawBtn.className = 'btn btn-disabled';
+        drawBtn.textContent = '等待新規則設定中...';
+        document.getElementById('modal-rule').classList.toggle('hidden', !amIDrawer);
+        if (amIDrawer) setTimeout(() => document.getElementById('input-custom-rule').focus(), 200);
+      } else {
+        document.getElementById('modal-rule').classList.add('hidden');
+        if (isMyTurn) {
+          bannerEl.textContent = '🔥 輪到你抽牌了！';
+          bannerEl.classList.add('my-turn');
+          drawBtn.disabled = false;
+          drawBtn.className = 'btn btn-primary';
+          drawBtn.textContent = '🎲 抽一張牌';
+        } else {
+          bannerEl.textContent = `⏳ 輪到【${game.turnPlayerName}】抽牌`;
+          bannerEl.classList.remove('my-turn');
+          drawBtn.disabled = true;
+          drawBtn.className = 'btn btn-disabled';
+          drawBtn.textContent = `等待 ${game.turnPlayerName} 抽牌...`;
+        }
+      }
+
+      const gameoverEl = document.getElementById('modal-gameover');
+      if (game.isGameOver) {
+        document.getElementById('gameover-loser').textContent = game.currentCard ? game.currentCard.drawerName : '';
+        document.getElementById('btn-restart').classList.toggle('hidden', !isHost);
+        document.getElementById('btn-back-lobby').classList.toggle('hidden', !isHost);
+        setTimeout(() => gameoverEl.classList.remove('hidden'), 650);
+      } else {
+        gameoverEl.classList.add('hidden');
+      }
+    }
+
+    function animateCardFlip(cardData, isFirstDraw) {
+      const cardEl = document.getElementById('card');
+      const applyContent = () => {
+        const suitClass = cardData.isRed ? 'red-suit' : 'black-suit';
+        ['top', 'btm'].forEach(pos => {
+          const rEl = document.getElementById(`front-rank-${pos}`);
+          const sEl = document.getElementById(`front-suit-${pos}`);
+          rEl.textContent = cardData.rank;
+          rEl.className = `corner-rank ${suitClass}`;
+          sEl.textContent = cardData.suit;
+          sEl.className = `corner-suit ${suitClass}`;
+        });
+        document.getElementById('front-rule-title').textContent = cardData.ruleTitle;
+        document.getElementById('front-rule-desc').textContent = cardData.ruleDesc;
+        if (navigator.vibrate) navigator.vibrate(40);
+      };
+      if (isFirstDraw) {
+        applyContent();
+        requestAnimationFrame(() => cardEl.classList.add('is-flipped'));
+      } else {
+        cardEl.classList.remove('is-flipped');
+        setTimeout(() => { applyContent(); cardEl.classList.add('is-flipped'); }, 240);
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+  </script>
+</body>
+</html>
