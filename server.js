@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const os = require('os');
-const kingsCup = require('./games/kingsCup');
+const gamesRegistry = require('./games');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,25 +21,35 @@ function generateRoomCode() {
   return code;
 }
 
+// 針對每位玩家發送個人化狀態（避免底牌、兇手身分與幽靈視角外洩）
 function broadcastRoomState(roomCode) {
   const room = rooms.get(roomCode);
   if (!room) return;
 
-  io.to(roomCode).emit('room_state', {
-    roomCode: room.roomCode,
-    hostId: room.hostId,
-    phase: room.phase,
-    players: room.players.map(p => ({
-      id: p.id,
-      name: p.name,
-      connected: p.connected
-    })),
-    game: room.gameState ? kingsCup.getPublicState(room.gameState, room.players) : null
+  const gameDef = gamesRegistry.getGame(room.selectedGameId);
+  const publicPlayers = room.players.map(p => ({
+    id: p.id,
+    name: p.name,
+    connected: p.connected
+  }));
+
+  room.players.forEach(player => {
+    if (!player.socketId) return;
+    io.to(player.socketId).emit('room_state', {
+      roomCode: room.roomCode,
+      hostId: room.hostId,
+      phase: room.phase,
+      selectedGameId: room.selectedGameId,
+      availableGames: gamesRegistry.listGames(),
+      players: publicPlayers,
+      game: room.gameState
+        ? gameDef.module.getPublicState(room.gameState, room.players, player.id)
+        : null
+    });
   });
 }
 
 io.on('connection', (socket) => {
-  // 建立新房間
   socket.on('create_room', ({ playerName, playerId }) => {
     const cleanName = (playerName || '').trim().slice(0, 12);
     if (!cleanName || !playerId) return;
@@ -49,6 +59,7 @@ io.on('connection', (socket) => {
       roomCode,
       hostId: playerId,
       phase: 'LOBBY',
+      selectedGameId: 'kingsCup',
       players: [{
         id: playerId,
         socketId: socket.id,
@@ -66,7 +77,6 @@ io.on('connection', (socket) => {
     broadcastRoomState(roomCode);
   });
 
-  // 加入現有房間（同時支援斷線重連與中途加入）
   socket.on('join_room', ({ roomCode, playerName, playerId }) => {
     const code = (roomCode || '').trim();
     const cleanName = (playerName || '').trim().slice(0, 12);
@@ -83,6 +93,10 @@ io.on('connection', (socket) => {
       existingPlayer.connected = true;
       if (cleanName) existingPlayer.name = cleanName;
     } else {
+      if (room.phase !== 'LOBBY') {
+        socket.emit('error_msg', '遊戲進行中，請等本局結束回大廳後再加入！');
+        return;
+      }
       if (!cleanName) {
         socket.emit('error_msg', '請輸入你的暱稱！');
         return;
@@ -102,7 +116,6 @@ io.on('connection', (socket) => {
     broadcastRoomState(code);
   });
 
-  // 頁面重整時自動接回原牌局
   socket.on('rejoin_room', ({ roomCode, playerId }) => {
     const room = rooms.get(roomCode);
     if (!room) {
@@ -124,22 +137,40 @@ io.on('connection', (socket) => {
     broadcastRoomState(roomCode);
   });
 
-  // 房長開始遊戲
+  socket.on('select_game', ({ roomCode, playerId, gameId }) => {
+    const room = rooms.get(roomCode);
+    if (!room || room.hostId !== playerId || room.phase !== 'LOBBY') return;
+
+    const gameDef = gamesRegistry.getGame(gameId);
+    room.selectedGameId = gameDef.id;
+    broadcastRoomState(roomCode);
+  });
+
   socket.on('start_game', ({ roomCode, playerId }) => {
     const room = rooms.get(roomCode);
     if (!room || room.hostId !== playerId) return;
 
+    const gameDef = gamesRegistry.getGame(room.selectedGameId);
+    if (room.players.length < gameDef.minPlayers) {
+      socket.emit('error_msg', `《${gameDef.name}》至少需要 ${gameDef.minPlayers} 位玩家才能開始！`);
+      return;
+    }
+    if (room.players.length > gameDef.maxPlayers) {
+      socket.emit('error_msg', `《${gameDef.name}》最多支援 ${gameDef.maxPlayers} 位玩家！`);
+      return;
+    }
+
     room.phase = 'PLAYING';
-    room.gameState = kingsCup.initState();
+    room.gameState = gameDef.module.initState(room.players);
     broadcastRoomState(roomCode);
   });
 
-  // 遊戲內動作（抽牌、送出 J 規則、重新開局）
   socket.on('game_action', ({ roomCode, playerId, action, payload }) => {
     const room = rooms.get(roomCode);
     if (!room || room.phase !== 'PLAYING' || !room.gameState) return;
 
-    room.gameState = kingsCup.handleAction(
+    const gameDef = gamesRegistry.getGame(room.selectedGameId);
+    room.gameState = gameDef.module.handleAction(
       room.gameState,
       playerId,
       room.players,
@@ -149,7 +180,6 @@ io.on('connection', (socket) => {
     broadcastRoomState(roomCode);
   });
 
-  // 回到等待大廳
   socket.on('back_to_lobby', ({ roomCode, playerId }) => {
     const room = rooms.get(roomCode);
     if (!room || room.hostId !== playerId) return;
@@ -159,7 +189,6 @@ io.on('connection', (socket) => {
     broadcastRoomState(roomCode);
   });
 
-  // 斷線標記（保留座位等待重連）
   socket.on('disconnect', () => {
     const { roomCode, playerId } = socket.data || {};
     if (!roomCode || !playerId) return;
@@ -174,15 +203,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// 取得 Mac 區網 IP 方便手機連線
 function getLocalIPs() {
   const interfaces = os.networkInterfaces();
   const ips = [];
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        ips.push(iface.address);
-      }
+      if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
     }
   }
   return ips;
@@ -191,11 +217,8 @@ function getLocalIPs() {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log('\n=========================================');
-  console.log('👑 多人派對平台伺服器已成功啟動！');
-  console.log(`💻 Mac 本機測試：http://localhost:${PORT}`);
-  const ips = getLocalIPs();
-  ips.forEach(ip => {
-    console.log(`📱 iPhone 連線網址：http://${ip}:${PORT}`);
-  });
+  console.log('🎮 多人派對遊戲平台已成功啟動！');
+  console.log(`💻 本機測試：http://localhost:${PORT}`);
+  getLocalIPs().forEach(ip => console.log(`📱 區網連線：http://${ip}:${PORT}`));
   console.log('=========================================\n');
 });
