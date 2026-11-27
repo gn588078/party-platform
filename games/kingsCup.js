@@ -44,11 +44,7 @@ function initState() {
     drawId: 0,
     currentCard: null,
     kingsDrawn: 0,
-    status: {
-      drinker: '無',
-      crazy: '無',
-      rule: '無'
-    },
+    status: { drinker: '無', crazy: '無', rule: '無' },
     pendingRuleInput: false,
     isGameOver: false
   };
@@ -56,18 +52,14 @@ function initState() {
 
 function handleAction(state, playerId, players, action, payload = {}) {
   if (!players || players.length === 0) return state;
-
-  if (action === 'RESTART') {
-    return initState();
-  }
+  if (action === 'RESTART') return initState();
 
   const safeTurnIndex = state.turnIndex % players.length;
   const currentPlayer = players[safeTurnIndex];
 
   if (action === 'DRAW_CARD') {
     if (state.isGameOver || state.pendingRuleInput) return state;
-    if (currentPlayer.id !== playerId) return state;
-    if (state.deck.length === 0) return state;
+    if (currentPlayer.id !== playerId || state.deck.length === 0) return state;
 
     const card = state.deck.pop();
     const rule = RULES[card.rank];
@@ -81,14 +73,9 @@ function handleAction(state, playerId, players, action, payload = {}) {
       drawerName: currentPlayer.name
     };
 
-    // 自動更新 8 與 Q 的狀態持有者
-    if (card.rank === '8') {
-      state.status.drinker = currentPlayer.name;
-    } else if (card.rank === 'Q') {
-      state.status.crazy = currentPlayer.name;
-    }
+    if (card.rank === '8') state.status.drinker = currentPlayer.name;
+    else if (card.rank === 'Q') state.status.crazy = currentPlayer.name;
 
-    // K 累計判定
     if (card.rank === 'K') {
       state.kingsDrawn += 1;
       if (state.kingsDrawn >= 4) {
@@ -97,32 +84,26 @@ function handleAction(state, playerId, players, action, payload = {}) {
       }
     }
 
-    // 若抽到 J，等待抽牌者輸入新規則後再換下一位
     if (card.rank === 'J') {
       state.pendingRuleInput = true;
     } else {
       state.turnIndex = (safeTurnIndex + 1) % players.length;
     }
-
     return state;
   }
 
   if (action === 'SUBMIT_RULE') {
-    if (!state.pendingRuleInput) return state;
-    if (!state.currentCard || state.currentCard.drawerId !== playerId) return state;
-
+    if (!state.pendingRuleInput || !state.currentCard || state.currentCard.drawerId !== playerId) return state;
     const cleanRule = (payload.ruleText || '').trim();
     state.status.rule = cleanRule || '（未命名規則）';
     state.pendingRuleInput = false;
     state.turnIndex = (safeTurnIndex + 1) % players.length;
-
     return state;
   }
 
   return state;
 }
 
-// 過濾傳給前端的資料（隱藏未抽牌堆順序）
 function getPublicState(state, players) {
   const safeTurnIndex = players.length > 0 ? state.turnIndex % players.length : 0;
   return {
@@ -138,8 +119,4 @@ function getPublicState(state, players) {
   };
 }
 
-module.exports = {
-  initState,
-  handleAction,
-  getPublicState
-};
+module.exports = { initState, handleAction, getPublicState };
